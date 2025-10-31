@@ -18,7 +18,7 @@ export const POST = async (req: NextRequest) => {
 
         // Ignore bot commands or non-questions
         if (question.startsWith('/')) {
-            await sendTelegramMessage(chatId, "Send me a question about HR policies!");
+            await sendTelegramMessage(chatId, "Send me a question about NIMC, and I'll do my best to assist you!");
             return NextResponse.json({ ok: true });
         }
 
