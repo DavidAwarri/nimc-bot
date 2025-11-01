@@ -1,16 +1,16 @@
 // lib/ai.ts
 // === DeepSeek API Call ===
 export async function queryDeepSeek(prompt: string): Promise<string> {
-    const response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+    const response = await fetch('https://api.deepseek.com/chat/completions', {
         method: 'POST',
         headers: {
             'Authorization': `Bearer ${process.env.DEEPSEEK_API_KEY}`,
             'Content-Type': 'application/json',
-            'HTTP-Referer': 'http://localhost:3000', // Change to Vercel URL in prod
+            'HTTP-Referer': 'https://nimc-bot.vercel.app/',
             'X-Title': 'HR AI Assistant',
         },
         body: JSON.stringify({
-            model: 'deepseek/deepseek-chat-v3.1:free',
+            model: 'deepseek-chat',
             messages: [
                 { role: 'system', content: 'You are a helpful AI assistant.' },
                 { role: 'user', content: prompt },
@@ -48,14 +48,70 @@ export function processDeepSeekResponse(response: string): string {
         answer = lines.slice(1, -1).join('\n').trim();
     }
 
-    // === CRITICAL: Parse JSON if present ===
-    try {
-        const parsed = JSON.parse(answer);
-        if (parsed && typeof parsed === 'object' && 'answer' in parsed) {
-            answer = String(parsed.answer).trim();
+    // === CRITICAL: Parse JSON if present (with multiple attempts for nested encoding) ===
+    let maxAttempts = 5; // Prevent infinite loops
+    let attempts = 0;
+
+    while (attempts < maxAttempts) {
+        attempts++;
+
+        try {
+            const parsed = JSON.parse(answer);
+
+            if (parsed && typeof parsed === 'object') {
+                // Extract the answer field if it exists
+                if ('answer' in parsed) {
+                    const extracted = parsed.answer;
+
+                    // If answer is a string, use it
+                    if (typeof extracted === 'string') {
+                        answer = extracted.trim();
+                        // Check if this is another JSON string that needs parsing
+                        if ((answer.startsWith('{') && answer.endsWith('}')) ||
+                            (answer.startsWith('[') && answer.endsWith(']'))) {
+                            continue; // Try parsing again
+                        }
+                        break;
+                    }
+                    // If answer is an object/array, stringify and try again
+                    else if (typeof extracted === 'object') {
+                        answer = JSON.stringify(extracted);
+                        continue;
+                    }
+                }
+                // Handle case where the entire object might be the answer
+                else if (Object.keys(parsed).length === 1) {
+                    const firstValue = Object.values(parsed)[0];
+                    if (typeof firstValue === 'string') {
+                        answer = firstValue.trim();
+                        // Check if this is another JSON string
+                        if ((answer.startsWith('{') && answer.endsWith('}')) ||
+                            (answer.startsWith('[') && answer.endsWith(']'))) {
+                            continue;
+                        }
+                        break;
+                    } else if (typeof firstValue === 'object') {
+                        answer = JSON.stringify(firstValue);
+                        continue;
+                    }
+                }
+            }
+            // If parsed is a string, it might be double-encoded
+            else if (typeof parsed === 'string') {
+                answer = parsed.trim();
+                // Check if this is another JSON string
+                if ((answer.startsWith('{') && answer.endsWith('}')) ||
+                    (answer.startsWith('[') && answer.endsWith(']'))) {
+                    continue;
+                }
+            }
+
+            break; // Successfully processed or no more parsing needed
+
+        } catch (e) {
+            // Not JSON — exit the loop
+            break;
         }
-    } catch (e) {
-        // Not JSON — continue
     }
 
     // Remove markdown
@@ -74,7 +130,7 @@ export function processDeepSeekResponse(response: string): string {
 
     answer = answer.trim();
 
-    if (!answer || ['""', "''", '{}', '[]'].includes(answer)) {
+    if (!answer || ['""', "''", '{}', '[]', 'null', 'undefined'].includes(answer)) {
         return "I apologize, but I couldn't generate a proper response. Can you send that message again?";
     }
 
